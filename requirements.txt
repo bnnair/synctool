@@ -1,0 +1,12 @@
+# SyncTool dependencies
+# Python 3.10+ required
+# Install with: pip install -r requirements.txt
+
+# Windows volume/drive enumeration via ctypes (GetVolumeInformation, GetDriveType)
+pywin32>=311
+
+# Windows 11 Sun Valley theme for tkinter (optional — falls back to native Windows theme)
+sv_ttk>=2.6.1
+
+# EXIF / image metadata reading — required for the Organise tab
+Pillow>=12.0.0

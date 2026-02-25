@@ -1,0 +1,32 @@
+# Claude Code
+.claude/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Runtime data (auto-created on first launch)
+data/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
