@@ -8,10 +8,10 @@ A Windows desktop application for syncing files and folders to external USB driv
 
 - [Features](#features)
 - [Requirements](#requirements)
-- [Installation](#installation)
-- [Desktop Shortcut](#desktop-shortcut)
-- [Standalone Executable](#standalone-executable)
-- [Running the App](#running-the-app)
+- [Standalone Executable](#standalone-executable-recommended)
+- [Installation from Source](#installation-from-source)
+- [Desktop Shortcut from Source](#desktop-shortcut-from-source)
+- [Running from Source](#running-from-source)
 - [Usage](#usage)
 - [Architecture](#architecture)
 - [Project Structure](#project-structure)
@@ -47,77 +47,35 @@ A Windows desktop application for syncing files and folders to external USB driv
 
 ---
 
-## Installation
+## Standalone Executable (Recommended)
 
-### 1. Clone or download the repository
+The recommended way to run SyncTool is as a self-contained Windows executable — no Python installation required on the target machine.
+
+The `SyncTool.spec` PyInstaller spec file is committed to the repository for reproducible builds.
+
+### 1. Set up the environment (once)
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/bnnair/synctool.git
 cd synctool
-```
-
-### 2. Create a virtual environment
-
-```bash
 python -m venv .venv
-```
-
-### 3. Activate the virtual environment
-
-```bash
-# Command Prompt
-.venv\Scripts\activate
-
-# PowerShell
-.venv\Scripts\Activate.ps1
-
-# Git Bash / WSL
-source .venv/Scripts/activate
-```
-
-### 4. Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-> **Note:** `sv_ttk` (Windows 11 theme) and `Pillow` (EXIF reading for the Organise tab) are both included. If Pillow is not installed, the Organise tab will show an error when you try to use it — all other sync functionality continues to work normally.
-
----
-
-## Desktop Shortcut
-
-After completing the installation above, run the included PowerShell script to create a **SyncTool** shortcut on your Desktop:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File install_shortcut.ps1
-```
-
-This creates `SyncTool.lnk` on your Desktop. It launches the app via `pythonw.exe` (no console window). Double-click it to start SyncTool like any other Windows application.
-
-> **Optional icon:** Place a 256×256 `.ico` file at `assets\icon.ico` before running the script and it will be used as the shortcut and window icon automatically.
-
----
-
-## Standalone Executable
-
-To build a self-contained `.exe` that runs without Python or a venv installed:
-
-### 1. Install PyInstaller
-
-```bash
+.venv\Scripts\pip install -r requirements.txt
 .venv\Scripts\pip install pyinstaller
 ```
 
 ### 2. Build the executable
 
 ```bash
+# Using the committed spec file (recommended — reproducible)
+.venv\Scripts\pyinstaller SyncTool.spec
+
+# Or build from scratch
 .venv\Scripts\pyinstaller --noconsole --onefile --name SyncTool main.py
 ```
 
 | Flag | Effect |
 |---|---|
-| `--noconsole` | No terminal window (GUI-only app) |
+| `--noconsole` | No terminal window (GUI-only) |
 | `--onefile` | Bundles everything into a single `SyncTool.exe` |
 | `--name SyncTool` | Output file name |
 
@@ -125,11 +83,13 @@ The executable is written to `dist\SyncTool.exe`.
 
 ### 3. Add an icon (optional)
 
+Place a 256×256 `.ico` file at `assets\icon.ico`, then rebuild:
+
 ```bash
 .venv\Scripts\pyinstaller --noconsole --onefile --name SyncTool --icon assets\icon.ico main.py
 ```
 
-### 4. Create a Desktop shortcut to the exe
+### 4. Create a Desktop shortcut
 
 Right-click `dist\SyncTool.exe` → **Send to** → **Desktop (create shortcut)**.
 
@@ -138,26 +98,77 @@ Or run this in PowerShell:
 ```powershell
 $ws = New-Object -ComObject WScript.Shell
 $sc = $ws.CreateShortcut("$env:USERPROFILE\Desktop\SyncTool.lnk")
-$sc.TargetPath = "$PWD\dist\SyncTool.exe"
-$sc.WorkingDirectory = "$PWD"
+$sc.TargetPath = (Resolve-Path "dist\SyncTool.exe").Path
+$sc.WorkingDirectory = (Get-Location).Path
 $sc.Save()
+Write-Host "Shortcut created on Desktop."
 ```
 
-> **Note:** The `data\` folder (database and log) is always created next to the executable, so keep `SyncTool.exe` in its own folder rather than placing it directly on the Desktop.
+> **Important:** The `data\` folder (database and log) is created next to the executable on first launch. Keep `SyncTool.exe` inside its `dist\` folder (or copy the entire folder to a permanent location) — do not move the `.exe` file alone to the Desktop.
+
+> **Note:** `dist\` and `build\` are excluded from git. Every developer builds their own local copy from the committed spec.
 
 ---
 
-## Running the App
+## Installation from Source
+
+For development or running directly with Python — requires Python 3.10+ on the machine.
+
+### 1. Clone the repository
 
 ```bash
-# From a terminal (shows log output)
+git clone https://github.com/bnnair/synctool.git
+cd synctool
+```
+
+### 2. Create and activate a virtual environment
+
+```bash
+python -m venv .venv
+
+# Command Prompt
+.venv\Scripts\activate
+
+# PowerShell
+.venv\Scripts\Activate.ps1
+
+# Git Bash
+source .venv/Scripts/activate
+```
+
+### 3. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+> **Note:** If `Pillow` is not installed, the Organise tab will show an error when used — all sync functionality continues to work normally.
+
+---
+
+## Desktop Shortcut from Source
+
+After completing the source installation above, run the included script to create a Desktop shortcut that launches via `pythonw.exe` (no console window):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install_shortcut.ps1
+```
+
+This creates `SyncTool.lnk` on your Desktop pointing to the venv's `pythonw.exe`. The venv must remain in place for the shortcut to work.
+
+---
+
+## Running from Source
+
+```bash
+# Terminal (with log output in console)
 python main.py
 
-# Without a console window
+# No console window
 .venv\Scripts\pythonw.exe main.py
 ```
 
-The `data\synctool.db` SQLite database and `data\synctool.log` log file are created automatically on the first launch.
+The `data\synctool.db` and `data\synctool.log` files are created automatically on the first launch.
 
 ---
 
