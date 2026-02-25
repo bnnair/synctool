@@ -9,6 +9,8 @@ A Windows desktop application for syncing files and folders to external USB driv
 - [Features](#features)
 - [Requirements](#requirements)
 - [Installation](#installation)
+- [Desktop Shortcut](#desktop-shortcut)
+- [Standalone Executable](#standalone-executable)
 - [Running the App](#running-the-app)
 - [Usage](#usage)
 - [Architecture](#architecture)
@@ -83,10 +85,76 @@ pip install -r requirements.txt
 
 ---
 
+## Desktop Shortcut
+
+After completing the installation above, run the included PowerShell script to create a **SyncTool** shortcut on your Desktop:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install_shortcut.ps1
+```
+
+This creates `SyncTool.lnk` on your Desktop. It launches the app via `pythonw.exe` (no console window). Double-click it to start SyncTool like any other Windows application.
+
+> **Optional icon:** Place a 256×256 `.ico` file at `assets\icon.ico` before running the script and it will be used as the shortcut and window icon automatically.
+
+---
+
+## Standalone Executable
+
+To build a self-contained `.exe` that runs without Python or a venv installed:
+
+### 1. Install PyInstaller
+
+```bash
+.venv\Scripts\pip install pyinstaller
+```
+
+### 2. Build the executable
+
+```bash
+.venv\Scripts\pyinstaller --noconsole --onefile --name SyncTool main.py
+```
+
+| Flag | Effect |
+|---|---|
+| `--noconsole` | No terminal window (GUI-only app) |
+| `--onefile` | Bundles everything into a single `SyncTool.exe` |
+| `--name SyncTool` | Output file name |
+
+The executable is written to `dist\SyncTool.exe`.
+
+### 3. Add an icon (optional)
+
+```bash
+.venv\Scripts\pyinstaller --noconsole --onefile --name SyncTool --icon assets\icon.ico main.py
+```
+
+### 4. Create a Desktop shortcut to the exe
+
+Right-click `dist\SyncTool.exe` → **Send to** → **Desktop (create shortcut)**.
+
+Or run this in PowerShell:
+
+```powershell
+$ws = New-Object -ComObject WScript.Shell
+$sc = $ws.CreateShortcut("$env:USERPROFILE\Desktop\SyncTool.lnk")
+$sc.TargetPath = "$PWD\dist\SyncTool.exe"
+$sc.WorkingDirectory = "$PWD"
+$sc.Save()
+```
+
+> **Note:** The `data\` folder (database and log) is always created next to the executable, so keep `SyncTool.exe` in its own folder rather than placing it directly on the Desktop.
+
+---
+
 ## Running the App
 
 ```bash
+# From a terminal (shows log output)
 python main.py
+
+# Without a console window
+.venv\Scripts\pythonw.exe main.py
 ```
 
 The `data\synctool.db` SQLite database and `data\synctool.log` log file are created automatically on the first launch.
