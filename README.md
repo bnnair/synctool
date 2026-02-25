@@ -10,7 +10,6 @@ A Windows desktop application for syncing files and folders to external USB driv
 - [Requirements](#requirements)
 - [Standalone Executable](#standalone-executable-recommended)
 - [Installation from Source](#installation-from-source)
-- [Desktop Shortcut from Source](#desktop-shortcut-from-source)
 - [Running from Source](#running-from-source)
 - [Usage](#usage)
 - [Architecture](#architecture)
@@ -143,18 +142,6 @@ pip install -r requirements.txt
 ```
 
 > **Note:** If `Pillow` is not installed, the Organise tab will show an error when used — all sync functionality continues to work normally.
-
----
-
-## Desktop Shortcut from Source
-
-After completing the source installation above, run the included script to create a Desktop shortcut that launches via `pythonw.exe` (no console window):
-
-```powershell
-powershell -ExecutionPolicy Bypass -File install_shortcut.ps1
-```
-
-This creates `SyncTool.lnk` on your Desktop pointing to the venv's `pythonw.exe`. The venv must remain in place for the shortcut to work.
 
 ---
 
