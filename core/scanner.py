@@ -4,7 +4,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from db.models import FileStat
-from utils.config import SCAN_WORKERS
+from utils.config import SCAN_WORKERS, SCAN_EXCLUDE_DIRS
 
 
 def scan_tree(root: str, cancel_check=None) -> dict[str, FileStat]:
@@ -56,7 +56,8 @@ def scan_tree(root: str, cancel_check=None) -> dict[str, FileStat]:
                     except OSError:
                         pass
                 elif entry.is_dir(follow_symlinks=True):
-                    subdirs.append(entry.path)
+                    if entry.name not in SCAN_EXCLUDE_DIRS:
+                        subdirs.append(entry.path)
     except OSError:
         return result
 
@@ -116,7 +117,8 @@ def _walk(base: str, current: str, result: dict, cancel_check, visited: set) -> 
                     except OSError:
                         pass
                 elif entry.is_dir(follow_symlinks=True):
-                    _walk(base, entry.path, result, cancel_check, visited)
+                    if entry.name not in SCAN_EXCLUDE_DIRS:
+                        _walk(base, entry.path, result, cancel_check, visited)
     except PermissionError:
         pass
     except OSError:

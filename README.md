@@ -25,6 +25,7 @@ A Windows desktop application for syncing files and folders to external USB driv
 
 - **Parallel sync** — sync to up to 3 USB drives simultaneously via `ThreadPoolExecutor`
 - **Parallel scanning** — top-level subdirectories are scanned concurrently (8 worker threads); significantly faster on SSDs and NVMe for large trees
+- **Directory exclusions** — `.git`, `node_modules`, `__pycache__`, and other development artifacts are skipped automatically; configurable in `utils/config.py`
 - **Parallel copying** — up to 4 files copied concurrently per drive job; especially effective for folders with many small files
 - **Smart diffing** — three-level comparison: size → modification timestamp → optional SHA-256 hash
 - **Atomic copies** — writes to a `.synctmp` file, then renames; safe if the drive is disconnected mid-copy
@@ -347,6 +348,18 @@ Walks a directory tree with `os.scandir()` recursively. Returns a `dict[str, Fil
 
 **Parallel scanning:** the root level is scanned inline; each top-level subdirectory is then submitted to a `ThreadPoolExecutor` (up to `SCAN_WORKERS=8` threads) as an independent recursive walk. Every worker has its own `visited` set, keeping circular-link detection correct. On SSDs and NVMe drives this typically cuts scan time by 3–6× for wide or deep trees.
 
+**Directory exclusions:** directories whose names appear in `SCAN_EXCLUDE_DIRS` (see `utils/config.py`) are silently skipped at every level. The default list covers common development artifacts that can contain hundreds of thousands of files and would make scanning a workspace folder impractically slow:
+
+| Excluded name | Why |
+|---|---|
+| `.git` | Git object store — up to 100k+ loose files per repo |
+| `.hg`, `.svn` | Mercurial / SVN internals |
+| `node_modules` | npm packages — 50k+ files per project, easily restored |
+| `__pycache__` | Python bytecode — auto-regenerated |
+| `.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `.tox` | Tool caches |
+
+Add or remove entries in `SCAN_EXCLUDE_DIRS` in `utils/config.py` to customise the list.
+
 Detects circular symlinks and Windows NTFS junction points. Also handles individual file selection (non-directory sources).
 
 ### `core/comparator.py`
@@ -495,6 +508,7 @@ Application-wide constants:
 | `COPY_RETRY_DELAY` | 1 s | Delay between retries |
 | `SCAN_WORKERS` | 8 | Parallel threads for directory tree scanning |
 | `COPY_WORKERS` | 4 | Parallel threads for file copy within one drive job |
+| `SCAN_EXCLUDE_DIRS` | `.git`, `node_modules`, `__pycache__`, … | Directory names skipped during scanning |
 | `DRIVE_POLL_INTERVAL_MS` | 2000 ms | Drive monitor polling interval |
 | `UI_QUEUE_POLL_MS` | 300 ms | Event queue drain interval |
 | `APP_WIDTH` / `APP_HEIGHT` | 920×640 | Initial window dimensions |

@@ -18,6 +18,25 @@ SCAN_WORKERS = 8
 # Helps most with many small files; USB bandwidth is still the ceiling for large files.
 COPY_WORKERS = 4
 
+# Directory names that are silently skipped during scanning.
+# These are development/VCS artifacts that are never useful to sync and can
+# contain hundreds of thousands of files (e.g. .git/objects, node_modules).
+# Add or remove entries here to customise the exclusion list.
+SCAN_EXCLUDE_DIRS: frozenset = frozenset({
+    # Version control internals
+    ".git",
+    ".hg",
+    ".svn",
+    # JavaScript / Node
+    "node_modules",
+    # Python
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+})
+
 DRIVE_POLL_INTERVAL_MS = 2000  # how often to check for new drives
 UI_QUEUE_POLL_MS = 300          # how often the UI drains the event queue
 
