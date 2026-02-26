@@ -24,6 +24,8 @@ A Windows desktop application for syncing files and folders to external USB driv
 ## Features
 
 - **Parallel sync** — sync to up to 3 USB drives simultaneously via `ThreadPoolExecutor`
+- **Parallel scanning** — top-level subdirectories are scanned concurrently (8 worker threads); significantly faster on SSDs and NVMe for large trees
+- **Parallel copying** — up to 4 files copied concurrently per drive job; especially effective for folders with many small files
 - **Smart diffing** — three-level comparison: size → modification timestamp → optional SHA-256 hash
 - **Atomic copies** — writes to a `.synctmp` file, then renames; safe if the drive is disconnected mid-copy
 - **Bidirectional sync** — three-way comparison using stored per-file states; conflicts are renamed with a timestamp suffix (no data loss)
@@ -52,7 +54,7 @@ The recommended way to run SyncTool is as a self-contained Windows executable �
 
 The `SyncTool.spec` PyInstaller spec file is committed to the repository for reproducible builds.
 
-### 1. Set up the environment (once)
+### 1. Set up the build environment (once)
 
 ```bash
 git clone https://github.com/bnnair/synctool.git
@@ -88,22 +90,36 @@ Place a 256×256 `.ico` file at `assets\icon.ico`, then rebuild:
 .venv\Scripts\pyinstaller --noconsole --onefile --name SyncTool --icon assets\icon.ico main.py
 ```
 
-### 4. Create a Desktop shortcut
+### 4. Install to a permanent location
 
-Right-click `dist\SyncTool.exe` → **Send to** → **Desktop (create shortcut)**.
+The `data\` folder (SQLite database and log file) is created **next to the executable** on first launch. Do not place `SyncTool.exe` directly on the Desktop — move it to a permanent folder first so the data folder has a stable home.
 
-Or run this in PowerShell:
+**Recommended install folder:** `C:\Users\<you>\AppData\Local\SyncTool\`
 
 ```powershell
+# Create the install folder and copy the exe there
+$dest = "$env:LOCALAPPDATA\SyncTool"
+New-Item -ItemType Directory -Force -Path $dest | Out-Null
+Copy-Item "dist\SyncTool.exe" -Destination $dest
+Write-Host "Installed to $dest"
+```
+
+After this, `SyncTool.exe` lives at `C:\Users\<you>\AppData\Local\SyncTool\SyncTool.exe` and all data files will be written to `C:\Users\<you>\AppData\Local\SyncTool\data\`.
+
+### 5. Create a Desktop shortcut
+
+```powershell
+$exePath = "$env:LOCALAPPDATA\SyncTool\SyncTool.exe"
 $ws = New-Object -ComObject WScript.Shell
 $sc = $ws.CreateShortcut("$env:USERPROFILE\Desktop\SyncTool.lnk")
-$sc.TargetPath = (Resolve-Path "dist\SyncTool.exe").Path
-$sc.WorkingDirectory = (Get-Location).Path
+$sc.TargetPath       = $exePath
+$sc.WorkingDirectory = "$env:LOCALAPPDATA\SyncTool"
+$sc.Description      = "SyncTool — USB drive sync utility"
 $sc.Save()
 Write-Host "Shortcut created on Desktop."
 ```
 
-> **Important:** The `data\` folder (database and log) is created next to the executable on first launch. Keep `SyncTool.exe` inside its `dist\` folder (or copy the entire folder to a permanent location) — do not move the `.exe` file alone to the Desktop.
+Double-click **SyncTool** on the Desktop to launch. No console window, no Python required.
 
 > **Note:** `dist\` and `build\` are excluded from git. Every developer builds their own local copy from the committed spec.
 
@@ -225,15 +241,21 @@ ui/          ← presentation layer (Tkinter)
 ```
 Main thread (Tkinter event loop)
   │
-  ├── DriveMonitor (daemon thread)          ← polls for drive changes every 2 s
+  ├── DriveMonitor (daemon thread)             ← polls for drive changes every 2 s
   │
   └── ParallelSyncManager
-        ├── ThreadPoolExecutor worker 1    ← SyncEngine for Drive 1
-        ├── ThreadPoolExecutor worker 2    ← SyncEngine for Drive 2
-        └── ThreadPoolExecutor worker 3    ← SyncEngine for Drive 3
+        ├── drive-worker 1 → SyncEngine
+        │     ├── scanner pool  (8 threads)   ← parallel subdirectory scan
+        │     └── copy pool     (4 threads)   ← parallel file copy
+        ├── drive-worker 2 → SyncEngine
+        │     ├── scanner pool  (8 threads)
+        │     └── copy pool     (4 threads)
+        └── drive-worker 3 → SyncEngine
+              ├── scanner pool  (8 threads)
+              └── copy pool     (4 threads)
 
-Sync threads → put events into queue.Queue
-Main thread  → drains queue every 300 ms via root.after() → updates UI
+All worker threads → put events into queue.Queue
+Main thread        → drains queue every 300 ms via root.after() → updates UI
 ```
 
 **Data flow:**
@@ -321,7 +343,11 @@ Entry point. Adds the project root to `sys.path`, calls `setup_logging()` and `i
 
 ### `core/scanner.py`
 
-Walks a directory tree with `os.scandir()` recursively. Returns a `dict[str, FileStat]` keyed by relative path. Detects circular symlinks/junctions (Windows NTFS). Also handles individual file selection (non-directory sources).
+Walks a directory tree with `os.scandir()` recursively. Returns a `dict[str, FileStat]` keyed by relative path.
+
+**Parallel scanning:** the root level is scanned inline; each top-level subdirectory is then submitted to a `ThreadPoolExecutor` (up to `SCAN_WORKERS=8` threads) as an independent recursive walk. Every worker has its own `visited` set, keeping circular-link detection correct. On SSDs and NVMe drives this typically cuts scan time by 3–6× for wide or deep trees.
+
+Detects circular symlinks and Windows NTFS junction points. Also handles individual file selection (non-directory sources).
 
 ### `core/comparator.py`
 
@@ -349,17 +375,19 @@ Atomic file copy:
 2. Copy metadata (timestamps, permissions) via `shutil.copystat`
 3. Rename to the final destination path
 
-Retries up to 3 times on `OSError` with a 1-second delay. Accepts a `progress_cb(bytes_written)` callback and a `cancel_event` for graceful interruption. Chunk size is 1 MB (configurable in `utils/config.py`).
+Retries up to 3 times on `OSError` with a 1-second delay. Accepts a `progress_cb(bytes_written)` callback and a `cancel_event` for graceful interruption. Chunk size is 4 MB (configurable via `COPY_CHUNK_SIZE` in `utils/config.py`).
 
 ### `core/sync_engine.py`
 
 Orchestrates one source → destination sync job:
 1. Scans both trees
 2. Calls `Comparator.build_plan()`
-3. Executes the plan (copy, delete, conflict handling)
+3. Executes the plan — copy and conflict ops run in a `ThreadPoolExecutor` (up to `COPY_WORKERS=4` concurrent files); deletes and skips remain sequential
 4. Saves `FileState` records for future bidirectional comparisons
 5. Records a `SyncHistory` entry with timing and per-file results
 6. Emits `ProgressEvent`, `FileActionEvent`, `SyncCompleteEvent`, and `LogEvent` to the shared event queue
+
+Shared progress counters (`files_done`, `bytes_done`) are protected by a `threading.Lock`. A `_CancelledError` raised in any worker sets the cancel event and the pool drains gracefully.
 
 ### `core/parallel_sync.py`
 
@@ -462,12 +490,14 @@ Application-wide constants:
 |---|---|---|
 | `DB_PATH` | `data/synctool.db` | SQLite database location |
 | `LOG_PATH` | `data/synctool.log` | Log file location |
-| `COPY_CHUNK_SIZE` | 1 MB | Read/write chunk for copy and hash |
-| `COPY_RETRIES` | 3 | Retry attempts on `OSError` |
+| `COPY_CHUNK_SIZE` | 4 MB | Read/write chunk for copy and hash |
+| `COPY_RETRY_COUNT` | 3 | Retry attempts on `OSError` |
 | `COPY_RETRY_DELAY` | 1 s | Delay between retries |
-| `DRIVE_POLL_MS` | 2000 ms | Drive monitor polling interval |
-| `UI_POLL_MS` | 300 ms | Event queue drain interval |
-| `WINDOW_SIZE` | 920×640 | Initial window dimensions |
+| `SCAN_WORKERS` | 8 | Parallel threads for directory tree scanning |
+| `COPY_WORKERS` | 4 | Parallel threads for file copy within one drive job |
+| `DRIVE_POLL_INTERVAL_MS` | 2000 ms | Drive monitor polling interval |
+| `UI_QUEUE_POLL_MS` | 300 ms | Event queue drain interval |
+| `APP_WIDTH` / `APP_HEIGHT` | 920×640 | Initial window dimensions |
 
 ### `utils/events.py`
 
@@ -512,8 +542,8 @@ Thin wrappers around Windows API calls via `ctypes`:
 | **Event bus** | `utils/events.py` — sync threads publish; UI main thread consumes via `root.after()` |
 | **Atomic write** | `file_ops.py` — write to `.synctmp`, then rename; safe on power loss or disconnection |
 | **Three-way merge** | `comparator.py` — bidirectional sync uses stored `FileState` as the base revision |
-| **ThreadPoolExecutor** | `parallel_sync.py` — bounded concurrency across drives |
-| **Cooperative cancellation** | `threading.Event` passed into every sync thread; checked between files |
+| **ThreadPoolExecutor** | `parallel_sync.py` (across drives), `scanner.py` (subdirectory scan), `sync_engine.py` (per-file copy) |
+| **Cooperative cancellation** | `threading.Event` passed into every sync thread and copy worker; checked between chunks |
 | **WAL + mutex** | `db/database.py` — SQLite WAL mode + `threading.Lock` for thread-safe access |
 | **Polling monitor** | `drive_detector.py` — background thread polls for drive changes every 2 s |
 
