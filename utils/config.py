@@ -7,9 +7,16 @@ DB_PATH = os.path.join(DATA_DIR, "synctool.db")
 LOG_PATH = os.path.join(DATA_DIR, "synctool.log")
 
 MAX_DRIVES = 3
-COPY_CHUNK_SIZE = 1 * 1024 * 1024  # 1 MB chunks for streaming copy + hash
+COPY_CHUNK_SIZE = 4 * 1024 * 1024  # 4 MB chunks for streaming copy + hash
 COPY_RETRY_COUNT = 3
 COPY_RETRY_DELAY = 1.0  # seconds
+
+# Parallel workers for directory tree scanning (more = faster on SSDs/NVMe)
+SCAN_WORKERS = 8
+
+# Parallel workers for file copy within a single drive job.
+# Helps most with many small files; USB bandwidth is still the ceiling for large files.
+COPY_WORKERS = 4
 
 DRIVE_POLL_INTERVAL_MS = 2000  # how often to check for new drives
 UI_QUEUE_POLL_MS = 300          # how often the UI drains the event queue

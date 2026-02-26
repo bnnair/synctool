@@ -4,12 +4,15 @@ import threading
 from datetime import datetime, timezone
 from typing import Optional
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from core.scanner import scan_tree
 from core.comparator import compare_trees
 from core.file_ops import atomic_copy, safe_delete, _CancelledError
 from db.models import SyncHistory, FileState
 from db.repository import FileStateRepository, HistoryRepository
 from utils import events
+from utils.config import COPY_WORKERS
 from utils.logger import get_logger
 
 log = get_logger("synctool.engine")
@@ -135,39 +138,44 @@ class SyncEngine:
         )
         total_files = len(all_ops) + len(plan.to_delete) + len(plan.to_skip)
         total_bytes = sum(sz for _, _, _, sz, _ in all_ops)
-        done_files = 0
-        done_bytes = 0
-        history_entries = []
 
-        def _emit(current_file=""):
+        # Shared mutable counters — accessed from multiple copy worker threads.
+        _lock = threading.Lock()
+        _done = [0, 0]          # [files_done, bytes_done]
+        history_entries: list = []
+
+        def _emit(current_file: str = "") -> None:
             events.put(events.ProgressEvent(
                 drive_serial=self.drive_serial,
-                files_done=done_files,
+                files_done=_done[0],
                 files_total=total_files,
-                bytes_done=done_bytes,
+                bytes_done=_done[1],
                 bytes_total=total_bytes,
                 current_file=current_file,
             ))
 
         _emit()
 
-        for src_abs, dst_abs, rel, size_bytes, action in all_ops:
+        def _copy_one(op: tuple) -> None:
+            """Copy one file; called from a worker thread."""
+            src_abs, dst_abs, rel, size_bytes, action = op
             if self._is_cancelled():
-                raise _CancelledError()
+                return
 
-            def _progress_cb(n):
-                nonlocal done_bytes
-                done_bytes += n
+            def _progress(n: int) -> None:
+                with _lock:
+                    _done[1] += n
                 _emit(rel)
 
             try:
-                atomic_copy(src_abs, dst_abs, progress_cb=_progress_cb,
+                atomic_copy(src_abs, dst_abs, progress_cb=_progress,
                             cancel_check=self._cancel_check)
-                history_entries.append((rel, action, size_bytes, ""))
-                done_files += 1
-                if self._history:
-                    self._history.files_copied += 1
-                    self._history.bytes_copied += size_bytes
+                with _lock:
+                    _done[0] += 1
+                    history_entries.append((rel, action, size_bytes, ""))
+                    if self._history:
+                        self._history.files_copied += 1
+                        self._history.bytes_copied += size_bytes
                 events.put(events.FileActionEvent(
                     drive_serial=self.drive_serial, rel_path=rel,
                     action=action, size_bytes=size_bytes,
@@ -176,27 +184,48 @@ class SyncEngine:
                 raise
             except Exception as exc:
                 log.error("Copy failed %s: %s", src_abs, exc)
-                history_entries.append((rel, "error", size_bytes, str(exc)))
+                with _lock:
+                    _done[0] += 1
+                    history_entries.append((rel, "error", size_bytes, str(exc)))
                 events.put(events.FileActionEvent(
                     drive_serial=self.drive_serial, rel_path=rel,
                     action="error", size_bytes=size_bytes, error_msg=str(exc),
                 ))
-                done_files += 1
             _emit(rel)
 
+        # ── Parallel copy phase ──────────────────────────────────────────────
+        if all_ops:
+            workers = min(COPY_WORKERS, len(all_ops))
+            with ThreadPoolExecutor(max_workers=workers,
+                                    thread_name_prefix="copy") as ex:
+                futs = {ex.submit(_copy_one, op): op for op in all_ops}
+                for fut in as_completed(futs):
+                    try:
+                        fut.result()
+                    except _CancelledError:
+                        self.cancel_event.set()
+                        break
+            # Workers that were still running when we broke out of the loop
+            # will finish their current chunk quickly (cancel_check fires per chunk).
+
+        if self._is_cancelled():
+            raise _CancelledError()
+
+        # ── Deletes (sequential — fast, no benefit from parallelism) ─────────
         for dst_abs in plan.to_delete:
             if self._is_cancelled():
                 raise _CancelledError()
             rel = os.path.relpath(dst_abs, self.dest_path).replace("\\", "/")
             safe_delete(dst_abs)
             history_entries.append((rel, "delete", 0, ""))
-            done_files += 1
+            _done[0] += 1
             events.put(events.FileActionEvent(
                 drive_serial=self.drive_serial, rel_path=rel,
                 action="delete", size_bytes=0,
             ))
             _emit(rel)
 
+        # ── Skips ─────────────────────────────────────────────────────────────
         for src_abs, dst_abs, rel, size_bytes in plan.to_skip:
             if self._is_cancelled():
                 raise _CancelledError()
@@ -204,7 +233,7 @@ class SyncEngine:
                 drive_serial=self.drive_serial, rel_path=rel,
                 action="skip", size_bytes=size_bytes,
             ))
-            done_files += 1
+            _done[0] += 1
             _emit(rel)
 
         self._update_file_states(plan)
