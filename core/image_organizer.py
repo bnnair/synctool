@@ -148,7 +148,7 @@ def extract_date(filepath: str) -> Optional[datetime]:
 
 def _dest_folder(dest_root: str, dt: Optional[datetime]) -> str:
     if dt:
-        return os.path.join(dest_root, str(dt.year), f"{dt.year}-{dt.month:02d}")
+        return os.path.join(dest_root, str(dt.year), f"{dt.year}_{dt.month:02d}")
     return os.path.join(dest_root, "misc")
 
 

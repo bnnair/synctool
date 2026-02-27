@@ -27,6 +27,11 @@ SCAN_EXCLUDE_DIRS: frozenset = frozenset({
     ".git",
     ".hg",
     ".svn",
+    ".tmp",
+    ".ipynb_checkpoints",
+    "ailib",
+    ".metadata",
+    "Lib/site-packages*",
     # JavaScript / Node
     "node_modules",
     # Python
